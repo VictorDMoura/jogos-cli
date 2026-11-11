@@ -1,0 +1,30 @@
+# Binários compilados e executáveis
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+arcade
+jogos-cli
+
+# Binários e relatórios de testes do Go
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Diretório de workspace do Go
+go.work
+go.work.sum
+
+# IDEs e editores
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Arquivos de sistema operacional
+.DS_Store
+Thumbs.db
+Desktop.ini
