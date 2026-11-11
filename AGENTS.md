@@ -11,18 +11,19 @@ O **`jogos-cli`** é uma **Estação de Jogos de Terminal (CLI Arcade Station)**
 
 ## 2. Regra de Ouro Imutável: 100% Go Standard Library
 - **Zero Dependências Externas**: O arquivo `go.mod` **jamais** deve conter diretivas `require` (proibido `bubbletea`, `tcell`, `termbox`, `lipgloss`, `golang.org/x/...` ou qualquer pacote externo).
-- Toda solução — controle de terminal em modo bruto (*Raw Mode*), leitura de teclado, renderização ANSI, *game loop*, estado, placares e testes — deve utilizar exclusivamente pacotes nativos da biblioteca padrão do Go (`os`, `syscall`, `fmt`, `strings`, `time`, `math/rand/v2`, `context`, `slices`, `io`, `sync`, etc.).
+- Toda solução — controle de terminal em modo bruto (*Raw Mode*), leitura de teclado, renderização ANSI, *game loop*, estado, persistência em disco e testes — deve utilizar exclusivamente pacotes nativos da biblioteca padrão do Go (`os`, `syscall`, `fmt`, `strings`, `time`, `math/rand/v2`, `encoding/json`, `path/filepath`, `context`, `slices`, `unicode`, `io`, `sync`, etc.).
 
 ---
 
 ## 3. Arquitetura Baseada em Contratos (Invariante)
 
-A estrutura do projeto é dividida em 4 camadas com responsabilidades estritas. Novos recursos devem respeitar estas fronteiras:
+A estrutura do projeto é dividida em camadas com responsabilidades estritas. Novos recursos devem respeitar estas fronteiras:
 
 ```text
 jogos-cli/
 ├── AGENTS.md                 # Constituição perene do projeto
 ├── go.mod                    # Módulo Go (sem bloco require)
+├── data/                     # Persistência local em JSON (palavras, recordes, configurações)
 ├── cmd/
 │   └── arcade/
 │       └── main.go           # Bootstrap: inicializa Raw Mode, sinais de SO, Input e Launcher
@@ -68,9 +69,13 @@ type Game interface {
 - **`Meta()`**: Retorna textos prontos para exibição automática no menu principal.
 - **`Run(ctx)`**: Assume o loop de tela/entrada enquanto a partida dura e **sempre** retorna a pontuação obtida na sessão (`score`) quando o jogador volta ao menu (`ESC`/`Q`) ou quando o contexto é cancelado.
 
-### 4.2. Compartilhamento de Entrada (`engine.InputReader`)
+### 4.2. Compartilhamento de Entrada e Modelo de Teclas (`engine.InputReader` e `engine.Key`)
 - **Regra Crítica de Concorrência**: Nunca crie múltiplas goroutines lendo diretamente de `os.Stdin`, pois elas disputarão bytes de entrada.
 - Sempre obtenha o leitor compartilhado através de `input := engine.InputFromContext(ctx)` e chame `input.Drain()` ao iniciar uma nova tela ou partida para descartar teclas residuais no buffer.
+- **Separação entre Teclas Especiais e Letras (`engine.Key`)**:
+  - Teclas físicas de navegação e controle (`KeyUp`, `KeyDown`, `KeyLeft`, `KeyRight`, `KeyEnter`, `KeyEsc`, `KeySpace`, `KeyBackspace`, `KeyTab`, `KeyQuit`) possuem valores `>= 256` para nunca colidirem com caracteres de texto.
+  - Letras (`'a'-'z'`) e dígitos (`'0'-'9'`) são normalizados para seu `rune` ASCII minúsculo (acessíveis via `key.IsLetter()`, `key.UpperRune()` ou constantes como `KeyW`, `KeyA`, `KeyS`, `KeyD`, `KeyP`, `KeyR`, `KeyQ`).
+  - Isso permite que jogos de ação usem `WASD`/`P`/`R`/`Q` como atalhos, enquanto jogos de palavras/texto usem todas as letras de `A` a `Z` sem conflito com `ESC` ou setas.
 
 ### 4.3. Renderização Sem Flicker (`engine.Screen`)
 - **Proibido** executar comandos externos (`cls` / `clear`) ou imprimir linhas soltas com `fmt.Println` durante o loop.
@@ -92,18 +97,23 @@ Para manter o código sustentável e testável em qualquer época, todo jogo em 
 
 1. **Estado e Regras de Negócio (`State`)**:
    - Struct pura, sem dependência de terminal, ANSI ou `os.Stdin`.
-   - Métodos determinísticos ou baseados em `math/rand/v2` (ex.: `NewState`, `Reset`, `Step`, mudança de direção/ação).
+   - Métodos determinísticos ou baseados em `math/rand/v2` (ex.: `NewState`, `Reset`, `Step`, chute/ação).
    - Testado diretamente por testes unitários em `<id>_test.go`.
-2. **Loop Interativo e Renderização (`Game.Run` e `renderFrame`)**:
+2. **Persistência Local Isolada (`data/`)**:
+   - Sempre que um jogo ou recurso salvar dados em disco (no diretório `data/`, usando `encoding/json`), o caminho do arquivo deve ser injetável (ex.: `NewWithStorage(path string)`), mantendo o arquivo real como padrão no `New()`.
+   - Testes unitários de persistência **sempre** devem usar `t.TempDir()` para nunca sobrescrever ou depender dos dados reais do jogador em `data/`.
+3. **Loop Interativo e Renderização (`Game.Run` e `renderFrame`)**:
    - Conecta `time.Ticker` (para jogos em tempo real) ou eventos de `input.Events()` (para jogos por turno) ao `State`.
    - Traduz o `State` em linhas formatadas no `engine.Screen`.
 
 ### Convenções de UX Obrigatórias em Todos os Jogos
-- **Movimentação / Ação**: Suportar tanto **Setas direcionais** quanto **WASD**, além de `Enter`/`Espaço` para confirmação/ação.
+- **Movimentação / Ação**:
+  - Jogos de ação/navegação: suportar tanto **Setas direcionais** quanto **WASD**, além de `Enter`/`Espaço`.
+  - Jogos de texto/palavras: suportar digitação de `A-Z` (com normalização de acentos), `Backspace` para correção e `Tab`/`Enter` para ações secundárias.
 - **Pausa**: Tecla `P` (ou `Espaço` quando não usada como ação principal) deve pausar/retomar jogos em tempo real.
-- **Reinício Rápido**: Tecla `R` deve permitir reiniciar a partida imediatamente (especialmente na tela de *Game Over*).
-- **Saída Segura para o Menu**: Teclas `ESC` e `Q` devem encerrar a partida atual e retornar ao menu principal da estação devolvendo a pontuação alcançada.
-- **HUD Clara**: Sempre exibir pontuação atual, controles resumidos no rodapé e feedback visual claro para estados de *Pausa*, *Vitória* ou *Fim de Jogo*.
+- **Reinício / Nova Rodada**: Tecla `R` (ou `Enter`/`Espaço` ao fim de uma rodada) deve permitir jogar novamente imediatamente.
+- **Saída Segura para o Menu**: Tecla `ESC` (e `Q` quando o usuário não estiver em modo de digitação de texto) deve encerrar a partida atual e retornar ao menu principal da estação devolvendo a pontuação alcançada.
+- **HUD Clara**: Sempre exibir pontuação atual, controles resumidos no rodapé e feedback visual claro para estados de *Pausa*, *Vitória*, *Fim de Jogo* ou *Modo de Edição*.
 
 ---
 
