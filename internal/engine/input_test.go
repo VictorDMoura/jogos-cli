@@ -17,14 +17,14 @@ func TestParseKeys(t *testing.T) {
 			want: []Key{KeyUp, KeyDown, KeyRight, KeyLeft},
 		},
 		{
-			name: "WASD keys",
-			raw:  []byte("wSaD"),
-			want: []Key{KeyUp, KeyDown, KeyLeft, KeyRight},
+			name: "WASD and alphabet letters",
+			raw:  []byte("wSaDforca"),
+			want: []Key{KeyW, KeyS, KeyA, KeyD, Key('f'), Key('o'), Key('r'), Key('c'), Key('a')},
 		},
 		{
 			name: "Control keys",
-			raw:  []byte("\r \x1bqrp"),
-			want: []Key{KeyEnter, KeySpace, KeyEsc, KeyQuit, KeyRestart, KeyPause},
+			raw:  []byte("\r \x1bqrp\t\x7f\x03"),
+			want: []Key{KeyEnter, KeySpace, KeyEsc, KeyQ, KeyRestart, KeyPause, KeyTab, KeyBackspace, KeyQuit},
 		},
 	}
 

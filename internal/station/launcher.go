@@ -55,11 +55,11 @@ func (l *Launcher) Run(ctx context.Context) error {
 
 		case key := <-input.Events():
 			switch key {
-			case engine.KeyUp:
+			case engine.KeyUp, engine.KeyW:
 				l.selectedIdx = (l.selectedIdx - 1 + totalOptions) % totalOptions
 				l.render(screen)
 
-			case engine.KeyDown:
+			case engine.KeyDown, engine.KeyS:
 				l.selectedIdx = (l.selectedIdx + 1) % totalOptions
 				l.render(screen)
 
@@ -89,7 +89,7 @@ func (l *Launcher) Run(ctx context.Context) error {
 				screen.ClearScreen()
 				l.render(screen)
 
-			case engine.KeyEsc, engine.KeyQuit:
+			case engine.KeyEsc, engine.KeyQuit, engine.KeyQ:
 				return nil
 			}
 		}

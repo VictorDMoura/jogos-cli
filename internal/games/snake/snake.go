@@ -256,13 +256,13 @@ func (g *Game) Run(ctx context.Context) (int, error) {
 
 		case key := <-input.Events():
 			switch key {
-			case engine.KeyUp:
+			case engine.KeyUp, engine.KeyW:
 				state.ChangeDirection(DirUp)
-			case engine.KeyDown:
+			case engine.KeyDown, engine.KeyS:
 				state.ChangeDirection(DirDown)
-			case engine.KeyLeft:
+			case engine.KeyLeft, engine.KeyA:
 				state.ChangeDirection(DirLeft)
-			case engine.KeyRight:
+			case engine.KeyRight, engine.KeyD:
 				state.ChangeDirection(DirRight)
 			case engine.KeyPause, engine.KeySpace:
 				state.TogglePause()
@@ -274,7 +274,7 @@ func (g *Game) Run(ctx context.Context) (int, error) {
 				state.Reset()
 				ticker.Reset(state.TickDuration())
 				renderFrame(screen, state)
-			case engine.KeyEsc, engine.KeyQuit:
+			case engine.KeyEsc, engine.KeyQuit, engine.KeyQ:
 				if state.BestScore > g.bestScore {
 					g.bestScore = state.BestScore
 				}

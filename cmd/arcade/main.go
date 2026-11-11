@@ -9,6 +9,7 @@ import (
 
 	"jogos-cli/internal/engine"
 	"jogos-cli/internal/games"
+	"jogos-cli/internal/games/forca"
 	"jogos-cli/internal/games/snake"
 	"jogos-cli/internal/station"
 )
@@ -28,6 +29,7 @@ func main() {
 
 	catalog := []games.Game{
 		snake.New(),
+		forca.New(),
 	}
 
 	launcher := station.NewLauncher(catalog)
