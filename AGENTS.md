@@ -1,54 +1,57 @@
-# AGENTS.md — Diretrizes do Projeto `jogos-cli`
+# AGENTS.md — Constituição e Guia Perene do Projeto `jogos-cli`
 
-## 1. Visão Geral do Projeto
-O **`jogos-cli`** é uma **Estação de Jogos de Terminal (CLI Arcade Station)** desenvolvida em **Go 1.27**. O objetivo do projeto é fornecer um hub unificado no terminal onde o usuário pode navegar por um menu interativo, escolher e jogar diversos jogos clássicos e autorais renderizados inteiramente no console.
-
----
-
-## 2. Regra de Ouro: 100% Go Standard Library (Zero Dependências)
-> **PROIBIDO** o uso de bibliotecas de terceiros (`go.mod` não deve conter nenhuma diretiva `require` externa, como `bubbletea`, `tcell`, `termbox`, `lipgloss` ou `golang.org/x/...`).
-
-Toda funcionalidade — desde manipulação de terminal, leitura de teclado em modo bruto (*raw mode*), renderização ANSI, loop de jogo, persistência de recordes (*high scores*) e testes — **deve** ser construída exclusivamente com pacotes da biblioteca padrão do Go 1.27 (`os`, `syscall`, `fmt`, `strings`, `bytes`, `time`, `math/rand/v2`, `encoding/json`, `io`, `sync`, `context`, etc.).
+> Este documento define os **princípios imutáveis, contratos de arquitetura e padrões de engenharia** do `jogos-cli`. Ele foi desenhado para ser **atemporal (à prova de validade)**: independentemente de quantos jogos ou recursos sejam adicionados no futuro, estas regras permanecem válidas.
 
 ---
 
-## 3. Arquitetura e Estrutura de Diretórios
+## 1. Propósito do Projeto
+O **`jogos-cli`** é uma **Estação de Jogos de Terminal (CLI Arcade Station)** escrita em **Go (1.27+)**. Seu objetivo é oferecer um hub interativo executável diretamente no console, capaz de hospedar múltiplos jogos desacoplados sob um único motor de terminal.
+
+---
+
+## 2. Regra de Ouro Imutável: 100% Go Standard Library
+- **Zero Dependências Externas**: O arquivo `go.mod` **jamais** deve conter diretivas `require` (proibido `bubbletea`, `tcell`, `termbox`, `lipgloss`, `golang.org/x/...` ou qualquer pacote externo).
+- Toda solução — controle de terminal em modo bruto (*Raw Mode*), leitura de teclado, renderização ANSI, *game loop*, estado, placares e testes — deve utilizar exclusivamente pacotes nativos da biblioteca padrão do Go (`os`, `syscall`, `fmt`, `strings`, `time`, `math/rand/v2`, `context`, `slices`, `io`, `sync`, etc.).
+
+---
+
+## 3. Arquitetura Baseada em Contratos (Invariante)
+
+A estrutura do projeto é dividida em 4 camadas com responsabilidades estritas. Novos recursos devem respeitar estas fronteiras:
 
 ```text
 jogos-cli/
-├── AGENTS.md                 # Diretrizes e regras para agentes e desenvolvedores
-├── go.mod                    # Módulo Go 1.27 (sem dependências externas)
+├── AGENTS.md                 # Constituição perene do projeto
+├── go.mod                    # Módulo Go (sem bloco require)
 ├── cmd/
 │   └── arcade/
-│       └── main.go           # Ponto de entrada da Estação de Jogos
+│       └── main.go           # Bootstrap: inicializa Raw Mode, sinais de SO, Input e Launcher
 └── internal/
-    ├── engine/               # Motor compartilhado de terminal (100% stdlib)
-    │   ├── terminal.go       # Controle de Raw Mode (Windows Console API / POSIX termios via syscall)
-    │   ├── screen.go         # Double-buffer de tela, códigos ANSI, limpeza sem flicker
-    │   ├── input.go          # Leitura assíncrona de teclas (setas, WASD, ESC, Enter)
-    │   └── loop.go           # Game loop com tick rate configurável (time.Ticker)
-    ├── station/              # Interface do Hub / Menu Principal da Estação
-    │   ├── launcher.go       # Menu de seleção de jogos, placares e configurações
-    │   └── scores.go         # Persistência local de High Scores (encoding/json)
-    └── games/                # Catálogo de jogos implementando o contrato comum
-        ├── game.go           # Interface comum `Game` e registro do catálogo
-        ├── snake/            # Jogo da Cobrinha (exemplo de jogo em tempo real)
-        ├── tetris/           # Blocos em queda (exemplo de jogo baseado em tick/grid)
-        ├── pong/             # Clássico arcade
-        └── ...               # Novos jogos plugáveis
+    ├── engine/               # Motor de terminal compartilhado (I/O, ANSI e Teclado)
+    │   ├── terminal*.go      # Raw Mode multiplataforma (Windows Console API / POSIX termios)
+    │   ├── screen.go         # Double-buffering ANSI sem flicker
+    │   └── input.go          # Leitor único assíncrono de teclado compartilhado via Context
+    ├── station/              # Hub / Menu Principal da Estação
+    │   └── launcher.go       # Seleção de jogos, exibição de pontuação e ciclo de vida de sessão
+    └── games/                # Catálogo modular de jogos
+        ├── game.go           # Contrato universal `Game` e `Metadata`
+        └── <id_do_jogo>/     # Cada jogo vive em seu próprio subpacote isolado
 ```
+
+### Regras de Acoplamento entre Camadas
+1. **`internal/engine`** não conhece nenhum jogo nem o menu da estação.
+2. **`internal/games/<id>`** conhece apenas `internal/engine` e `internal/games`. Um jogo **nunca** importa outro jogo nem importa `internal/station`.
+3. **`internal/station`** conhece apenas a interface `games.Game` (nunca a implementação interna de um jogo específico).
+4. **`cmd/arcade/main.go`** é o único ponto que instancia o catálogo de jogos e os injeta no `station.Launcher`.
 
 ---
 
-## 4. Contrato de Jogos (`Game` Interface)
-Para que a estação seja modular e qualquer agente possa criar um jogo novo sem acoplamento com o menu principal, todo jogo deve implementar uma interface padronizada em `internal/games/game.go`:
+## 4. Contratos Fundamentais da Engine e dos Jogos
+
+### 4.1. Contrato Universal de Jogo (`internal/games/game.go`)
+Todo jogo, presente ou futuro, deve implementar:
 
 ```go
-package games
-
-import "context"
-
-// Metadata descreve as informações exibidas no menu da estação.
 type Metadata struct {
 	ID          string
 	Title       string
@@ -56,48 +59,62 @@ type Metadata struct {
 	Controls    string
 }
 
-// Game define o contrato que todo jogo da estação deve cumprir.
 type Game interface {
 	Meta() Metadata
-	// Run executa o jogo assumindo o controle do terminal e retorna a pontuação final.
 	Run(ctx context.Context) (score int, err error)
 }
 ```
 
----
+- **`Meta()`**: Retorna textos prontos para exibição automática no menu principal.
+- **`Run(ctx)`**: Assume o loop de tela/entrada enquanto a partida dura e **sempre** retorna a pontuação obtida na sessão (`score`) quando o jogador volta ao menu (`ESC`/`Q`) ou quando o contexto é cancelado.
 
-## 5. Diretrizes Técnicas de Terminal (Stdlib Only)
+### 4.2. Compartilhamento de Entrada (`engine.InputReader`)
+- **Regra Crítica de Concorrência**: Nunca crie múltiplas goroutines lendo diretamente de `os.Stdin`, pois elas disputarão bytes de entrada.
+- Sempre obtenha o leitor compartilhado através de `input := engine.InputFromContext(ctx)` e chame `input.Drain()` ao iniciar uma nova tela ou partida para descartar teclas residuais no buffer.
 
-### 5.1. Entrada de Teclado (Raw Mode Multiplataforma)
-Como apenas a *standard library* é permitida:
-- **Windows (`terminal_windows.go`)**: Utilizar `syscall.NewLazyDLL("kernel32.dll")` com `GetConsoleMode` e `SetConsoleMode` para desabilitar `ENABLE_LINE_INPUT` e `ENABLE_ECHO_INPUT`, além de habilitar `ENABLE_VIRTUAL_TERMINAL_PROCESSING` para suporte completo a ANSI Escape Codes.
-- **Linux/macOS (`terminal_unix.go`)**: Utilizar `syscall.Syscall(syscall.SYS_IOCTL, ...)` para manipular a struct `syscall.Termios` (desativando `ICANON` e `ECHO`).
-- **Restauração Segura**: Sempre garantir um `defer term.Restore()` no `main` e captura de sinais (`os/signal`) para nunca deixar o terminal do usuário desconfigurado ou com o cursor oculto após encerramento.
+### 4.3. Renderização Sem Flicker (`engine.Screen`)
+- **Proibido** executar comandos externos (`cls` / `clear`) ou imprimir linhas soltas com `fmt.Println` durante o loop.
+- Fluxo obrigatório de renderização a cada frame:
+  1. `screen.BeginFrame()` (posiciona o cursor em `\x1b[H` na memória).
+  2. `screen.WriteLine(...)` para cada linha do quadro (aplica `\x1b[K\r\n` automaticamente).
+  3. `screen.Flush()` (escreve o frame inteiro em uma única operação de I/O e limpa resíduos abaixo com `\x1b[J`).
+- Ao alternar entre o Menu da Estação e um Jogo, chame `screen.ClearScreen()` uma única vez antes do primeiro frame.
 
-### 5.2. Renderização Sem Flicker (Double Buffering)
-- **Proibido** usar comandos de shell externos (`cls` ou `clear`) a cada frame.
-- Construir todo o frame em memória usando `strings.Builder` ou `bytes.Buffer` ou um grid 2D de células (`rune` + cor ANSI).
-- Posicionar o cursor no topo (`\x1b[H`) e fazer uma única escrita (`os.Stdout.Write`) por frame.
-- Usar tela alternativa do terminal (`\x1b[?1049h` ao entrar e `\x1b[?1049l` ao sair) e ocultar o cursor (`\x1b[?25l` / `\x1b[?25h`).
-
-### 5.3. Idiomas do Go 1.27
-- Utilizar `math/rand/v2` para geração de números aleatórios.
-- Utilizar `min`, `max`, `clear` nativos e iteradores (`iter`) ou `range` sobre inteiros (`for i := range n`) sempre que deixarem o código mais limpo.
-- Manter lógica do estado do jogo desacoplada da renderização ANSI para permitir testes unitários rápidos com `go test ./...`.
+### 4.4. Segurança do Terminal (`engine.Terminal`)
+- O modo bruto (`EnableRawMode`) ativa o *Alternate Screen Buffer* (`\x1b[?1049h`), oculta o cursor (`\x1b[?25l`) e configura UTF-8/ANSI.
+- O `main` deve sempre garantir `defer term.Restore()` e interceptar sinais do sistema operacional (`os.Interrupt`, `syscall.SIGTERM`) via `signal.NotifyContext` para que o terminal do usuário nunca fique travado ou sem cursor ao sair.
 
 ---
 
-## 6. Fluxo de Trabalho para Agentes
-1. **Verificar Dependências**: Antes de concluir qualquer tarefa, garanta que `go.mod` contém **apenas** a declaração `module` e `go 1.27`, sem blocos `require`.
-2. **Compilação e Testes**:
-   - `go build ./...` deve compilar sem erros ou warnings.
-   - `go test ./...` deve validar a lógica dos jogos e da engine.
-3. **Como Adicionar um Novo Jogo**:
-   - Criar o pacote em `internal/games/<nome_do_jogo>`.
-   - Implementar a interface `games.Game`.
-   - Adicionar testes unitários para as regras de negócio do jogo (`<nome_do_jogo>_test.go`).
-   - Registrar o jogo na lista oficial do launcher da estação.
-4. **Experiência do Usuário (UX)**:
-   - Todo jogo deve exibir controles claros na lateral ou rodapé.
-   - A tecla `ESC` ou `Q` deve sempre permitir pausar ou voltar ao menu principal da estação sem encerrar o programa abruptamente.
-   - A tecla `R` em telas de *Game Over* deve permitir reiniciar a partida rapidamente.
+## 5. Padrão de Design Interno de Cada Jogo
+
+Para manter o código sustentável e testável em qualquer época, todo jogo em `internal/games/<id>` deve separar:
+
+1. **Estado e Regras de Negócio (`State`)**:
+   - Struct pura, sem dependência de terminal, ANSI ou `os.Stdin`.
+   - Métodos determinísticos ou baseados em `math/rand/v2` (ex.: `NewState`, `Reset`, `Step`, mudança de direção/ação).
+   - Testado diretamente por testes unitários em `<id>_test.go`.
+2. **Loop Interativo e Renderização (`Game.Run` e `renderFrame`)**:
+   - Conecta `time.Ticker` (para jogos em tempo real) ou eventos de `input.Events()` (para jogos por turno) ao `State`.
+   - Traduz o `State` em linhas formatadas no `engine.Screen`.
+
+### Convenções de UX Obrigatórias em Todos os Jogos
+- **Movimentação / Ação**: Suportar tanto **Setas direcionais** quanto **WASD**, além de `Enter`/`Espaço` para confirmação/ação.
+- **Pausa**: Tecla `P` (ou `Espaço` quando não usada como ação principal) deve pausar/retomar jogos em tempo real.
+- **Reinício Rápido**: Tecla `R` deve permitir reiniciar a partida imediatamente (especialmente na tela de *Game Over*).
+- **Saída Segura para o Menu**: Teclas `ESC` e `Q` devem encerrar a partida atual e retornar ao menu principal da estação devolvendo a pontuação alcançada.
+- **HUD Clara**: Sempre exibir pontuação atual, controles resumidos no rodapé e feedback visual claro para estados de *Pausa*, *Vitória* ou *Fim de Jogo*.
+
+---
+
+## 6. Protocolo Perene para Adicionar ou Modificar Funcionalidades
+
+Sempre que um agente ou desenvolvedor atuar neste repositório, deve seguir este checklist:
+
+1. **Criar/Atualizar Pacote**:
+   - Se for um novo jogo, criar `internal/games/<id>` implementando `games.Game` + testes `<id>_test.go` e registrá-lo na fatia `catalog` em `cmd/arcade/main.go`.
+2. **Validar Pureza do Módulo**:
+   - Confirmar que `go.mod` permanece sem nenhuma dependência externa (`require`).
+3. **Executar Verificação Automatizada**:
+   - `go build ./...` (deve compilar sem erros em qualquer plataforma suportada).
+   - `go test ./...` (todos os testes de engine e jogos devem passar).
